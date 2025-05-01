@@ -2,21 +2,40 @@
 Path: run.py
 """
 
+from urllib.parse import urlparse
 import os
-from twilio.rest import Client
-from dotenv import load_dotenv
+from flask import Flask, request, abort
+from twilio.request_validator import RequestValidator
+from twilio.twiml.messaging_response import MessagingResponse
 
-load_dotenv()
+app = Flask(__name__)
+validator = RequestValidator(os.getenv("TWILIO_AUTH_TOKEN"))
 
-account_sid = os.getenv("TWILIO_ACCOUNT_SID")
-auth_token = os.getenv("TWILIO_AUTH_TOKEN")
-client = Client(account_sid, auth_token)
+def twilio_url():
+    " Construct the Twilio URL from the request context."
+    p = urlparse(request.url)
+    proto = request.headers.get("X-Forwarded-Proto", request.scheme)
+    host  = request.headers.get("X-Forwarded-Host", request.host)
+    return f"{proto}://{host}{p.path}"
 
-message = client.messages.create(
-  from_='whatsapp:+14155238886',
-  content_sid='HXb5b62575e6e4ff6129ad7c8efe1f983e',
-  content_variables='{"1":"12/1","2":"3pm"}',
-  to='whatsapp:+5491135162685'
-)
+@app.route("/webhook/inbound", methods=["POST"])
+def inbound():
+    " Handle incoming messages from Twilio."
+    signature = request.headers.get("X-Twilio-Signature", "")
+    if not validator.validate(twilio_url(), request.form, signature):
+        abort(403)
 
-print(message.sid)
+    body = request.form.get("Body", "").strip().lower()
+    resp = MessagingResponse()
+    resp.message("¡Hola, cooperativa! 👋" if "hola" in body else
+                 "No entendí, enviá 'hola' para empezar.")
+    return str(resp)
+
+@app.route("/webhook/status", methods=["POST"])
+def status():
+    " Handle status callbacks from Twilio."
+    print(f"[STATUS] {request.form.get('MessageSid')}: {request.form.get('MessageStatus')}")
+    return ("", 204)
+
+if __name__ == "__main__":
+    app.run(port=5000, debug=True)
